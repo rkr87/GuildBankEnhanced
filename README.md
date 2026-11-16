@@ -1,3 +1,4 @@
+
 # Guild Bank Enhanced
 
 Organise your guild bank with one click. Guild Bank Enhanced routes items to tabs by type and subtype, combines partial stacks and sorts each tab—all from a consolidated bank interface for World of Warcraft 3.3.5a.
@@ -22,6 +23,8 @@ Both delays can be adjusted from 0 to 1 second. Sending moves too quickly can tr
 
 ## Screenshots
 
-<!-- Add screenshots here. -->
+![Full View](https://raw.githubusercontent.com/rkr87/GuildBankEnhanced/refs/heads/main/media/full_view.jpg)
+![Item Log](https://raw.githubusercontent.com/rkr87/GuildBankEnhanced/refs/heads/main/media/item_log.jpg)
+![Collapsed View](https://raw.githubusercontent.com/rkr87/GuildBankEnhanced/refs/heads/main/media/collapsed.jpg)
 
 See the [changelog](changelog.md) for release notes.
