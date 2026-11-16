@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+- Remember whether the tab details panel is open and allow resizing its sections.
+- Improve ordering checks for item links with different display levels.
+- Close the bank after a confirmed tab purchase and prompt for reopening.
+
 ## 1.0.0
 
 - Initial release.

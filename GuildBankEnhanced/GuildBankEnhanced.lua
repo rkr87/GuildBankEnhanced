@@ -1,4 +1,4 @@
--- Guild Bank Enhanced 1.0.0
+-- Guild Bank Enhanced 1.0.1
 do
 -- Pure in-tab sort planning. It never calls a move API or changes live slots.
 local modules=_G.GuildBankSorterModules or {}; _G.GuildBankSorterModules=modules
@@ -275,7 +275,7 @@ local addonName = ...
 if type(addonName) ~= "string" or addonName == "" then addonName = "GuildBankEnhanced" end
 local requestedFont = "Interface\\AddOns\\"..addonName.."\\Fonts\\PTSansNarrow-Bold.ttf"
 local GBS_FONT_SIZE=14
-local GBS_VERSION="1.0.0"
+local GBS_VERSION="1.0.1"
 local GBSFont=CreateFont("GBSFont")
 GBSFont:SetShadowOffset(0,0); GBSFont:SetShadowColor(0,0,0,0)
 local function SetFontAndCheck(object,path)
@@ -954,14 +954,34 @@ end
 local function SlotUnlocked(tab,slot)
     local _,_,locked=GetGuildBankItemInfo(tab,slot); return not locked
 end
+local function CursorItemFields(link)
+    if type(link)~="string" then return nil end
+    local payload=link:match("|Hitem:([^|]+)|h") or link:match("^item:(.+)$")
+    if not payload then return nil end
+    local fields={}
+    for value in (payload..":"):gmatch("(.-):") do
+        if value~="" and not value:match("^%-?%d+$") then return nil end
+        fields[#fields+1]=tonumber(value) or 0
+    end
+    return fields
+end
 local function CursorMatchesItem(kind,id,cursorLink,item)
     if not item or kind~="item" or id~=item.itemID then return false end
     if type(cursorLink)=="string" then
-        local cursorPayload=cursorLink:match("|H(item:[^|]+)|h")
-        local slotPayload=item.link and item.link:match("|H(item:[^|]+)|h")
-        if cursorPayload and slotPayload and cursorPayload~=slotPayload then return false end
+        local cursorFields,slotFields=CursorItemFields(cursorLink),CursorItemFields(item.link)
+        if cursorFields and slotFields then
+            -- Link level is display context, not item identity; preserve all
+            -- enchant, gem, random-property and unique/suffix-factor fields.
+            for i=1,math.max(8,#cursorFields,#slotFields) do
+                if i~=9 and (cursorFields[i] or 0)~=(slotFields[i] or 0) then return false end
+            end
+        else return false end
     end
     return true
+end
+local function LogCursorMismatch(cursorLink,slotLink)
+    local function safe(link) return tostring(link or "unavailable"):gsub("|","||") end
+    Log("Cursor link: "..safe(cursorLink).."; expected link: "..safe(slotLink),1,0.7,0.4)
 end
 local function OrderingSourceConsistent(tab,slot,original)
     local texture,count,locked=GetGuildBankItemInfo(tab,slot); local link=GetGuildBankItemLink(tab,slot)
@@ -1045,6 +1065,7 @@ arrangeStages.orderPickup=function(a)
     if (not kind or not OrderingSourceConsistent(a.tab,op.src,op.source)) and a.elapsed<3 then return end
     if not CursorMatchesItem(kind,id,link,op.source) or not OrderingSourceConsistent(a.tab,op.src,op.source) then
         local _,count,locked=GetGuildBankItemInfo(a.tab,op.src)
+        if kind=="item" and id==op.source.itemID then LogCursorMismatch(link,op.source.link) end
         GBS:StopArrange(string.format("Ordering pickup not verified on tab %d slot %d (cursor=%s id=%s, source count=%s locked=%s); inspect cursor and source.",a.tab,op.src,tostring(kind),tostring(id),tostring(count),tostring(locked))); return
     end
     a.stage="orderPlace"; a.elapsed=0
@@ -1056,6 +1077,7 @@ end
 arrangeStages.orderPlace=function(a)
     local op=a.op; local step=op.steps[a.orderIndex]; local kind,id,link=GetCursorInfo()
     if not step or not CursorMatchesItem(kind,id,link,step.after) or not CanMoveBetween(a.tab,a.tab) then
+        if step and kind=="item" and id==step.after.itemID then LogCursorMismatch(link,step.after.link) end
         GBS:StopArrange("Ordering cursor or permissions changed; inspect tab and cursor."); return
     end
     -- Do not continue a chain if an already verified placement was
@@ -1102,6 +1124,7 @@ arrangeStages.orderVerify=function(a)
     elseif a.elapsed>=5 then
         local _,sourceCount,sourceLocked=GetGuildBankItemInfo(a.tab,op.src)
         local _,destCount,destLocked=GetGuildBankItemInfo(a.tab,step.dst)
+        if displaced and kind=="item" and id==displaced.itemID and not CursorMatchesItem(kind,id,link,displaced) then LogCursorMismatch(link,displaced.link) end
         GBS:StopArrange(string.format("Ordering placement not observed on tab %d (source %d count=%s locked=%s, destination %d count=%s locked=%s, cursor=%s id=%s); inspect tab and cursor.",a.tab,op.src,tostring(sourceCount),tostring(sourceLocked),step.dst,tostring(destCount),tostring(destLocked),tostring(kind),tostring(id)))
     end
 end
@@ -1875,6 +1898,7 @@ function GBS.Bank:BuildActivitySections(f)
     side:SetClampedToScreen(false); side:SetMovable(false); side:SetScript("OnDragStart",nil); side:SetScript("OnDragStop",nil)
     local title=CreateGBSFontString(side.titleBar,"OVERLAY"); title:SetPoint("LEFT",side.titleBar,"LEFT",8,0); title:SetText("|cffffd100Tab Details|r")
     side:Hide(); bank.activityPanel=side
+    side.closeBtn:SetScript("OnClick",function() state.activityOpen=false; side:Hide() end)
     local function updateActivityButton()
         local active=side:IsShown(); local button=f.activityBtn
         button:SetText(active and ">" or "<")
@@ -1948,20 +1972,53 @@ function GBS.Bank:BuildActivitySections(f)
         if type(QueryGuildBankText)=="function" then pcall(QueryGuildBankText,tab) end
     end)
     f.activity={money=money,items=items,info=info}
+    local DIVIDER_HEIGHT=6
+    local MIN_CONTENT=3*(GBS_FONT_SIZE+2)+30
+    local divider=CreateFrame("Button",nil,side); divider:SetSize(SIDE_W,DIVIDER_HEIGHT); divider:EnableMouse(true); StyleBackdrop(divider,1)
+    divider:SetBackdropColor(0.22,0.22,0.22,1); divider:Hide(); side.divider=divider
+    divider:SetScript("OnEnter",function(self) GameTooltip:SetOwner(self,"ANCHOR_TOP"); GameTooltip:AddLine("Drag to resize Item Log and Info",1,0.82,0); GameTooltip:Show() end)
+    divider:SetScript("OnLeave",function() GameTooltip:Hide() end)
+    local function stopDrag() divider.dragY=nil; divider:SetScript("OnUpdate",nil) end
+    divider:SetScript("OnHide",stopDrag)
+    divider:SetScript("OnMouseUp",stopDrag)
+    divider:SetScript("OnMouseDown",function(self,button)
+        if button~="LeftButton" or GBS.isRunning or type(GetCursorPosition)~="function" then return end
+        local _,y=GetCursorPosition(); if type(y)~="number" then return end
+        self.dragY=y; self.startHeight=items.content:GetHeight()
+        self:SetScript("OnUpdate",function(d)
+            if GBS.isRunning or (type(IsMouseButtonDown)=="function" and not IsMouseButtonDown("LeftButton")) then stopDrag(); return end
+            local _,current=GetCursorPosition(); if type(current)~="number" then return end
+            local scale=side:GetEffectiveScale() or 1; if scale<=0 then return end
+            local available=math.max(2,side:GetHeight()-28-10-40-DIVIDER_HEIGHT)
+            local minimum=math.min(MIN_CONTENT,available/2)
+            local h=math.max(minimum,math.min(available-minimum,d.startHeight+(d.dragY-current)/scale))
+            GBSCharDB.activitySplitPercent=100*h/available; bank:LayoutActivityPanel()
+        end)
+    end)
     function bank:LayoutActivityPanel()
         side:SetHeight(f:GetHeight())
-        local available=math.max(2,side:GetHeight()-28-10-40)
-        local count=(state.itemLog and 0 or 1)+(state.info and 0 or 1)
-        local height=available/math.max(1,count); local y=-28
+        local both=not state.itemLog and not state.info
+        local available=math.max(2,side:GetHeight()-28-10-40-(both and DIVIDER_HEIGHT or 0))
+        local ratio=tonumber(GBSCharDB.activitySplitPercent)
+        if not ratio or ratio~=ratio then ratio=50 end
+        ratio=math.max(0,math.min(100,ratio))/100
+        local minimum=math.min(MIN_CONTENT,available/2)
+        local itemHeight=both and math.max(minimum,math.min(available-minimum,available*ratio)) or available
+        local y=-28
         for _,entry in ipairs({items,info}) do
             entry.header:ClearAllPoints(); entry.header:SetPoint("TOPLEFT",side,"TOPLEFT",10,y); y=y-20
             local collapsed=state[entry.key]; entry.header.arrow:SetText(collapsed and "+" or "-")
             if collapsed then entry.content:Hide()
             else
+                local height=both and (entry==items and itemHeight or available-itemHeight) or available
                 entry.content:ClearAllPoints(); entry.content:SetPoint("TOPLEFT",side,"TOPLEFT",10,y)
                 entry.content:SetHeight(height); entry.resize(entry==items and math.max(1,height-8) or height); entry.content:Show(); y=y-height
             end
+            if entry==items and both then
+                divider:ClearAllPoints(); divider:SetPoint("TOPLEFT",side,"TOPLEFT",10,y); divider:Show(); y=y-DIVIDER_HEIGHT
+            end
         end
+        if not both then divider:Hide() end
     end
     function bank:ToggleActivitySection(key)
         if GBS.isRunning then return end
@@ -1976,10 +2033,14 @@ function GBS.Bank:BuildActivitySections(f)
     end
     function bank:ToggleActivityPanel()
         if GBS.isRunning then return end
-        if side:IsShown() then side:Hide() else
-            self:LayoutActivityPanel(); side:Show()
-            for _,key in ipairs({"itemLog","info"}) do if not state[key] then f.RefreshSection(key) end end
+        if side:IsShown() then state.activityOpen=false; side:Hide() else
+            state.activityOpen=true; self:RestoreActivityPanel()
         end
+    end
+    function bank:RestoreActivityPanel()
+        if not state.activityOpen then return end
+        self:LayoutActivityPanel(); side:Show()
+        for _,key in ipairs({"itemLog","info"}) do if not state[key] then f.RefreshSection(key) end end
     end
     function f.RefreshSection(key)
         if not bank:IsOpen() or GBS.isRunning then return end
@@ -2248,7 +2309,7 @@ function GBS.Bank:Create()
     moneyBG:SetScript("OnLeave",function() GameTooltip:Hide() end)
     local settings=CreateFrame("Frame",nil,bot); settings:SetSize(3*buttonWidth+8,22); settings:SetPoint("LEFT",sortBtn,"RIGHT",4,0); f.settings=settings
     BuildDelays(settings,buttonWidth); f.moveSlider=settings.moveSlider; f.scanSlider=settings.scanSlider; f.sortDirBtn=settings.sortDirBtn
-    f:SetScript("OnShow", function() GBS.Bank:Refresh(); GBS.Bank:HookBags() end)
+    f:SetScript("OnShow", function() GBS.Bank:Refresh(); GBS.Bank:HookBags(); if GBS.Bank.RestoreActivityPanel then GBS.Bank:RestoreActivityPanel() end end)
     f:SetScript("OnHide", function()
         if GBS.isRunning or GBS.routing or GBS.activeMove or GBS.arrange then GBS:Cancel() end
         CloseOurSplit()
@@ -2384,6 +2445,7 @@ local function PurchaseInfo()
 end
 local function CanBuyTab(count,cost)
     if not GBS.Bank:IsOpen() or GBS.isRunning then return "Open the bank and stop sorting first." end
+    if SafeGetCursorInfo() then return "Place the item on your cursor before purchasing." end
     if GBS.Bank.purchasePending or GBS.Bank.purchaseUnconfirmed then return "A purchase is pending or unconfirmed. Reopen the bank to check." end
     if type(IsGuildLeader)~="function" or not IsGuildLeader() then return "Only the guild leader can purchase a tab." end
     if type(BuyGuildBankTab)~="function" then return "Tab purchasing is unavailable on this client." end
@@ -2406,13 +2468,13 @@ function GBS.Bank:OpenTabPurchase(tab)
     if self.tabConfig then self.tabConfig:Hide() end
     if self.moneyBox then self.moneyBox:Hide() end
     if not self.purchaseDialog then
-        local box=CreateGBSFrameBase("GBSTabPurchase",340,180,75)
+        local box=CreateGBSFrameBase("GBSTabPurchase",340,210,75)
         box:SetParent(self.frame); box:ClearAllPoints(); box:SetPoint("TOPLEFT",self.frame,"TOPRIGHT",8,0)
         box:SetClampedToScreen(false); box:SetMovable(false); box:SetScript("OnDragStart",nil); box:SetScript("OnDragStop",nil)
         local title=CreateGBSFontString(box.titleBar,"OVERLAY"); title:SetPoint("LEFT",box.titleBar,"LEFT",8,0); title:SetText("|cffffd100Purchase guild bank tab|r")
         local info=CreateGBSFontString(box,"OVERLAY"); info:SetPoint("TOPLEFT",box,"TOPLEFT",14,-34); info:SetWidth(310); info:SetJustifyH("LEFT"); box.info=info
-        local note=CreateGBSFontString(box,"OVERLAY"); note:SetPoint("TOPLEFT",box,"TOPLEFT",14,-65); note:SetWidth(310); note:SetJustifyH("LEFT"); note:SetText("Funds may come from your character or the guild bank, depending on the server.")
-        local status=CreateGBSFontString(box,"OVERLAY"); status:SetPoint("TOPLEFT",box,"TOPLEFT",14,-110); status:SetWidth(310); status:SetJustifyH("LEFT"); status:SetTextColor(1,0.55,0.35); box.status=status
+        local note=CreateGBSFontString(box,"OVERLAY"); note:SetPoint("TOPLEFT",box,"TOPLEFT",14,-65); note:SetWidth(310); note:SetJustifyH("LEFT"); note:SetText("Funds may come from your character or the guild bank. After purchase, the bank closes; reopen it. Unsaved tab info is discarded.")
+        local status=CreateGBSFontString(box,"OVERLAY"); status:SetPoint("TOPLEFT",box,"TOPLEFT",14,-140); status:SetWidth(310); status:SetJustifyH("LEFT"); status:SetTextColor(1,0.55,0.35); box.status=status
         local confirm=CreateFrame("Button",nil,box,"UIPanelButtonTemplate"); confirm:SetSize(95,22); confirm:SetPoint("BOTTOMRIGHT",box,"BOTTOMRIGHT",-112,10); confirm:SetText("Purchase"); StyleButton(confirm,true); box.confirm=confirm
         local cancel=CreateFrame("Button",nil,box,"UIPanelButtonTemplate"); cancel:SetSize(90,22); cancel:SetPoint("BOTTOMRIGHT",box,"BOTTOMRIGHT",-12,10); cancel:SetText("Cancel"); StyleButton(cancel,false); cancel:SetScript("OnClick",function() box:Hide() end)
         confirm:SetScript("OnClick",function()
@@ -2429,8 +2491,19 @@ function GBS.Bank:OpenTabPurchase(tab)
             local pending=GBS.Bank.purchasePending; if not pending then return end
             pending.elapsed=pending.elapsed+dt
             local count=PurchaseInfo()
-            if count and count>pending.count then
-                GBS.Bank.purchasePending=nil; box.status:SetText("Tab purchased."); GBS.Bank:Refresh(); GBS.Bank:ScheduleSelectionRefresh(true); return
+            if pending.purchased or (count and count>pending.count) then
+                if SafeGetCursorInfo() then
+                    if not pending.purchased then Chat("Tab purchased. Place the cursor item to close and reopen the bank.",1,0.8,0.2) end
+                    pending.purchased=true; box.status:SetText("Place the cursor item before the bank closes."); return
+                end
+                if type(CloseGuildBankFrame)~="function" then
+                    GBS.Bank.purchasePending=nil; GBS.Bank.purchaseUnconfirmed=true; box.status:SetText("Please close and reopen the bank."); Chat("Tab purchased. Please close and reopen the bank.",1,0.8,0.2); return
+                end
+                local ok=pcall(CloseGuildBankFrame)
+                if not ok then
+                    GBS.Bank.purchasePending=nil; GBS.Bank.purchaseUnconfirmed=true; box.status:SetText("Please close and reopen the bank."); Chat("Tab purchased. Please close and reopen the bank.",1,0.8,0.2); return
+                end
+                GBS.Bank.purchasePending=nil; Chat("Tab purchased. Please reopen the guild bank.",0.8,1,0.8); GBS.Bank:Hide(); return
             end
             if pending.elapsed>=8 then
                 GBS.Bank.purchasePending=nil; GBS.Bank.purchaseUnconfirmed=true
