@@ -1,0 +1,8 @@
+## Interface: 30300
+## Title: Guild Bank Enhanced
+## Notes: Guild bank with routing, stacking and in-tab sorting.
+## Author: rkr
+## Version: 1.0.0
+## SavedVariablesPerCharacter: GBSCharDB
+
+GuildBankEnhanced.lua
