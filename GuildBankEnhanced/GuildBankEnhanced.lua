@@ -1,4 +1,4 @@
--- Guild Bank Enhanced 1.0.1
+-- Guild Bank Enhanced 1.0.2
 do
 -- Pure in-tab sort planning. It never calls a move API or changes live slots.
 local modules=_G.GuildBankSorterModules or {}; _G.GuildBankSorterModules=modules
@@ -275,7 +275,7 @@ local addonName = ...
 if type(addonName) ~= "string" or addonName == "" then addonName = "GuildBankEnhanced" end
 local requestedFont = "Interface\\AddOns\\"..addonName.."\\Fonts\\PTSansNarrow-Bold.ttf"
 local GBS_FONT_SIZE=14
-local GBS_VERSION="1.0.1"
+local GBS_VERSION="1.0.2"
 local GBSFont=CreateFont("GBSFont")
 GBSFont:SetShadowOffset(0,0); GBSFont:SetShadowColor(0,0,0,0)
 local function SetFontAndCheck(object,path)
@@ -965,19 +965,38 @@ local function CursorItemFields(link)
     end
     return fields
 end
-local function CursorMatchesItem(kind,id,cursorLink,item)
+local function CompareCursorFields(cursorFields,slotFields)
+    if not cursorFields or not slotFields then return false,false end
+    local missingSuffix=false
+    for i=1,math.max(8,#cursorFields,#slotFields) do
+        local cursorValue,slotValue=cursorFields[i] or 0,slotFields[i] or 0
+        if i~=9 and cursorValue~=slotValue then
+            if i==7 and cursorValue==0 and slotValue~=0 then missingSuffix=true else return false,false end
+        end
+    end
+    return true,missingSuffix
+end
+local function OrderingSourceSnapshot(tab,slot,item,requireLock)
+    if not tab or not slot or not item then return false end
+    local texture,count,locked=GetGuildBankItemInfo(tab,slot)
+    return texture and count==item.count and GetGuildBankItemLink(tab,slot)==item.link
+        and (not requireLock or (locked and locked~=0))
+end
+local function CursorMatchesItem(kind,id,cursorLink,item,tab,slot)
     if not item or kind~="item" or id~=item.itemID then return false end
     if type(cursorLink)=="string" then
-        local cursorFields,slotFields=CursorItemFields(cursorLink),CursorItemFields(item.link)
-        if cursorFields and slotFields then
-            -- Link level is display context, not item identity; preserve all
-            -- enchant, gem, random-property and unique/suffix-factor fields.
-            for i=1,math.max(8,#cursorFields,#slotFields) do
-                if i~=9 and (cursorFields[i] or 0)~=(slotFields[i] or 0) then return false end
-            end
-        else return false end
+        local match,missingSuffix=CompareCursorFields(CursorItemFields(cursorLink),CursorItemFields(item.link))
+        if not match then return false end
+        -- Some 3.3.5 clients omit a random suffix on the cursor. Only accept
+        -- it while the original, unchanged source is visibly locked.
+        if missingSuffix and not OrderingSourceSnapshot(tab,slot,item,true) then return false end
     end
     return true
+end
+local function WaitingForSourceLock(kind,id,cursorLink,item,tab,slot)
+    if not item or kind~="item" or id~=item.itemID then return false end
+    local match,missing=CompareCursorFields(CursorItemFields(cursorLink),CursorItemFields(item.link))
+    return match and missing and OrderingSourceSnapshot(tab,slot,item,false)
 end
 local function LogCursorMismatch(cursorLink,slotLink)
     local function safe(link) return tostring(link or "unavailable"):gsub("|","||") end
@@ -1062,8 +1081,8 @@ arrangeStages.orderPickup=function(a)
     -- On 3.3.5a a guild-bank pickup may leave the original slot
     -- visible and locked until the destination click. An empty
     -- source is not a prerequisite for a verified cursor pickup.
-    if (not kind or not OrderingSourceConsistent(a.tab,op.src,op.source)) and a.elapsed<3 then return end
-    if not CursorMatchesItem(kind,id,link,op.source) or not OrderingSourceConsistent(a.tab,op.src,op.source) then
+    if (not kind or not OrderingSourceConsistent(a.tab,op.src,op.source) or (not CursorMatchesItem(kind,id,link,op.source,a.tab,op.src) and WaitingForSourceLock(kind,id,link,op.source,a.tab,op.src))) and a.elapsed<3 then return end
+    if not CursorMatchesItem(kind,id,link,op.source,a.tab,op.src) or not OrderingSourceConsistent(a.tab,op.src,op.source) then
         local _,count,locked=GetGuildBankItemInfo(a.tab,op.src)
         if kind=="item" and id==op.source.itemID then LogCursorMismatch(link,op.source.link) end
         GBS:StopArrange(string.format("Ordering pickup not verified on tab %d slot %d (cursor=%s id=%s, source count=%s locked=%s); inspect cursor and source.",a.tab,op.src,tostring(kind),tostring(id),tostring(count),tostring(locked))); return
@@ -1076,7 +1095,9 @@ arrangeStages.orderCooldown=function(a)
 end
 arrangeStages.orderPlace=function(a)
     local op=a.op; local step=op.steps[a.orderIndex]; local kind,id,link=GetCursorInfo()
-    if not step or not CursorMatchesItem(kind,id,link,step.after) or not CanMoveBetween(a.tab,a.tab) then
+    local sourceSlot=a.orderIndex==1 and op.src or nil
+    if step and sourceSlot and not CursorMatchesItem(kind,id,link,step.after,a.tab,sourceSlot) and WaitingForSourceLock(kind,id,link,step.after,a.tab,sourceSlot) and a.elapsed<3 then return end
+    if not step or not CursorMatchesItem(kind,id,link,step.after,a.tab,sourceSlot) or not CanMoveBetween(a.tab,a.tab) then
         if step and kind=="item" and id==step.after.itemID then LogCursorMismatch(link,step.after.link) end
         GBS:StopArrange("Ordering cursor or permissions changed; inspect tab and cursor."); return
     end
