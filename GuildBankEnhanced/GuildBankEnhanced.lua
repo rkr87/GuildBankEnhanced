@@ -1,4 +1,4 @@
--- Guild Bank Enhanced 1.0.2
+-- Guild Bank Enhanced 1.0.3
 do
 -- Pure in-tab sort planning. It never calls a move API or changes live slots.
 local modules=_G.GuildBankSorterModules or {}; _G.GuildBankSorterModules=modules
@@ -275,7 +275,7 @@ local addonName = ...
 if type(addonName) ~= "string" or addonName == "" then addonName = "GuildBankEnhanced" end
 local requestedFont = "Interface\\AddOns\\"..addonName.."\\Fonts\\PTSansNarrow-Bold.ttf"
 local GBS_FONT_SIZE=14
-local GBS_VERSION="1.0.2"
+local GBS_VERSION="1.0.3"
 local GBSFont=CreateFont("GBSFont")
 GBSFont:SetShadowOffset(0,0); GBSFont:SetShadowColor(0,0,0,0)
 local function SetFontAndCheck(object,path)
@@ -1855,6 +1855,12 @@ local function ActivityCount(fn,...)
     if not ok or type(n)~="number" or n~=n or n<0 or n~=math.floor(n) then return nil end
     return math.min(n,1000)
 end
+local function ReverseActivityLines(lines)
+    for i=1,math.floor(#lines/2) do
+        local j=#lines-i+1; lines[i],lines[j]=lines[j],lines[i]
+    end
+    return lines
+end
 local function ItemActivity(tab)
     local n=ActivityCount(GetNumGuildBankTransactions,tab)
     if not n or type(GetGuildBankTransaction)~="function" then return {"Item log unavailable."} end
@@ -1870,7 +1876,7 @@ local function ItemActivity(tab)
         end
     end
     if #lines==0 then lines[1]="No item transactions in the client cache." end
-    return lines
+    return ReverseActivityLines(lines)
 end
 local function MoneyActivity()
     local n=ActivityCount(GetNumGuildBankMoneyTransactions)
@@ -1884,7 +1890,7 @@ local function MoneyActivity()
         end
     end
     if #lines==0 then lines[1]="No money transactions in the client cache." end
-    return lines
+    return ReverseActivityLines(lines)
 end
 local function NewActivityList(parent,name,width)
     width=width or GRID_W

@@ -2,7 +2,7 @@
 ## Title: Guild Bank Enhanced
 ## Notes: Guild bank with routing, stacking and in-tab sorting.
 ## Author: rkr87
-## Version: 1.0.2
+## Version: 1.0.3
 ## SavedVariablesPerCharacter: GBSCharDB
 
 GuildBankEnhanced.lua

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.3
+
+- Display the most recent item and money log transactions first.
+
 ## 1.0.2
 
 - Handle ordering equipment when the client omits its random suffix from the cursor link, while checking the locked source slot.
